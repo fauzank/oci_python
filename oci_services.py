@@ -382,9 +382,11 @@ class DBSystem(object):
          for c in tenancy.get_compartments():           
             self.db_systems += db_client.list_db_systems(c.id).data
 
-            self.db_homes += db_client.list_db_homes(c.id).data
+            db_homes = db_client.list_db_homes(c.id).data
+            self.db_homes += db_homes
 
-            self.databases += db_client.list_databases(c.id).data
+            for db_home in db_homes:
+               self.databases += db_client.list_databases(c.id, db_home_id=db_home.id).data
             
             # for db in databases:
             #    self.dg_associations += db_client.list_data_guard_associations(db.id).data             
@@ -476,6 +478,8 @@ class DBSystem(object):
 
 def write_file( strdata, filename ):
    global report_no
+   global par_url
 
    resp = requests.put( f'{par_url}{filename}_{report_no}.csv', data=strdata.encode('utf-8'))
-   print( f'{filename} - file written')
+   print( f'{par_url}{filename}_{report_no}.csv - file written')
+   print( resp )

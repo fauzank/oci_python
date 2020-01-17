@@ -12,7 +12,7 @@ class OCIService(object):
       global par_url
 
       self.config = oci.config.from_file( "/.oci/config", "DEFAULT")
-      par_url = config[ 'par' ]
+      par_url = self.config[ 'par' ]
       timetup = time.gmtime()
       report_no = time.strftime('%Y-%m-%dT%H:%M:%SZ', timetup).replace( ':', '-')
 
@@ -382,15 +382,12 @@ class DBSystem(object):
          for c in tenancy.get_compartments():           
             self.db_systems += db_client.list_db_systems(c.id).data
 
-            db_homes = db_client.list_db_homes(c.id).data
-            self.db_homes += db_homes
+            self.db_homes += db_client.list_db_homes(c.id).data
 
-            for db_home in db_homes:
-               databases = db_client.list_databases(c.id, db_home.id ).data
-               self.databases += databases
-
-               # for db in databases:
-               #    self.dg_associations += db_client.list_data_guard_associations(db.id).data             
+            self.databases += db_client.list_databases(c.id).data
+            
+            # for db in databases:
+            #    self.dg_associations += db_client.list_data_guard_associations(db.id).data             
            
             self.autonomous_exadata += db_client.list_autonomous_exadata_infrastructures(c.id).data
             

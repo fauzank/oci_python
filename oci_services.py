@@ -412,18 +412,26 @@ class DBSystem(object):
       write_file( data, 'db_system' )
 
       # Print DB Home
-      print( 'id, compartment_id, db_system_id, db_version, display_name, last_patch_history_entry_id, lifecycle_state' )
-      
+      # print( 'id, compartment_id, db_system_id, db_version, display_name, last_patch_history_entry_id, lifecycle_state' )     
+      # for db_home in self.db_homes:
+      #    print( f'{db_home.id}, {db_home.compartment_id}, {db_home.db_system_id}, {db_home.db_version}, {db_home.display_name}, {db_home.last_patch_history_entry_id}, {db_home.lifecycle_state}' )
+
+      data = 'id, compartment_id, db_system_id, db_version, display_name, last_patch_history_entry_id, lifecycle_state, report_no'
       for db_home in self.db_homes:
-         print( f'{db_home.id}, {db_home.compartment_id}, {db_home.db_system_id}, {db_home.db_version}, {db_home.display_name}, {db_home.last_patch_history_entry_id}, {db_home.lifecycle_state}' )
- 
-       write_file( data, 'db_home' )
+         data += '\n'
+         data += f'{db_home.id}, {db_home.compartment_id}, {db_home.db_system_id}, {db_home.db_version}, {db_home.display_name}, {db_home.last_patch_history_entry_id}, {db_home.lifecycle_state}, {report_no}'
+
+      write_file( data, 'db_home' )
       
       # Print Database
-      print( 'id, compartment_id, auto_backup_enabled, auto_backup_window, backup_destination_details, recovery_window_in_days, db_home_id, db_name, db_unique_name, db_workload, lifecycle_state, pdb_name' )
+      # print( 'id, compartment_id, auto_backup_enabled, auto_backup_window, backup_destination_details, recovery_window_in_days, db_home_id, db_name, db_unique_name, db_workload, lifecycle_state, pdb_name' )
+      # for db in self.databases:
+      #    print( f'{db.id}, {db.compartment_id}, {db.db_backup_config.auto_backup_enabled}, {db.db_backup_config.auto_backup_window}, {db.db_backup_config.backup_destination_details}, {db.db_backup_config.recovery_window_in_days}, {db.db_home_id}, {db.db_name}, {db.db_unique_name}, {db.db_workload}, {db.lifecycle_state}, {db.pdb_name}' )
 
+      data = 'id, compartment_id, auto_backup_enabled, auto_backup_window, backup_destination_details, recovery_window_in_days, db_home_id, db_name, db_unique_name, db_workload, lifecycle_state, pdb_name, report_no'
       for db in self.databases:
-         print( f'{db.id}, {db.compartment_id}, {db.db_backup_config.auto_backup_enabled}, {db.db_backup_config.auto_backup_window}, {db.db_backup_config.backup_destination_details}, {db.db_backup_config.recovery_window_in_days}, {db.db_home_id}, {db.db_name}, {db.db_unique_name}, {db.db_workload}, {db.lifecycle_state}, {db.pdb_name}' )
+         data += '\n'
+         data += f'{db.id}, {db.compartment_id}, {db.db_backup_config.auto_backup_enabled}, {db.db_backup_config.auto_backup_window}, {db.db_backup_config.backup_destination_details}, {db.db_backup_config.recovery_window_in_days}, {db.db_home_id}, {db.db_name}, {db.db_unique_name}, {db.db_workload}, {db.lifecycle_state}, {db.pdb_name}, {report_no}'
 
       write_file( data, 'database' )
 

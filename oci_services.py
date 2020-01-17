@@ -67,7 +67,7 @@ class Tenancy(object):
          self.availability_domains += identity.list_availability_domains(config['tenancy']).data
 
    def get_compartments(self):
-      return [c for c in self.compartments if ( c.lifecycle_state == 'ACTIVE' and c.name != 'ManagedCompartmentForPaaS' )]
+      return [c for c in self.compartments if ( c.lifecycle_state == 'ACTIVE' and c.name != 'ManagedCompartmentForPaaS' and c.name != 'OCI_Scripts' )]
 
    def get_availability_domains( self, region_name):
       #return [e for e in availability.domains if e.region_name == region_name]

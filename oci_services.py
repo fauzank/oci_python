@@ -469,7 +469,7 @@ class DBSystem(object):
       # for adb in self.autonomous_db:
       #    print( f'{adb.id}, {adb.autonomous_container_database_id}, {adb.compartment_id}, {adb.cpu_core_count}, {adb.data_safe_status},  {adb.data_storage_size_in_tbs}, {adb.db_name}, {adb.db_version}, {adb.db_workload}, {adb.display_name}, {adb.is_auto_scaling_enabled}, {adb.is_dedicated}, {adb.is_free_tier}, {adb.lifecycle_state}, {adb.whitelisted_ips}' )
       
-      data = 'id, autonomous_container_database_id, compartment_id, cpu_core_count, data_safe_status, data_storage_size_in_tbs, db_name, db_version, db_workload, display_name, is_auto_scaling_enabled, is_dedicated, is_free_tier, lifecycle_state, whitelisted_ips'
+      data = 'id, autonomous_container_database_id, compartment_id, cpu_core_count, data_safe_status, data_storage_size_in_tbs, db_name, db_version, db_workload, display_name, is_auto_scaling_enabled, is_dedicated, is_free_tier, lifecycle_state, whitelisted_ips, report_no'
       for adb in self.autonomous_db:
          data += '\n'
          data += f'{adb.id}, {adb.autonomous_container_database_id}, {adb.compartment_id}, {adb.cpu_core_count}, {adb.data_safe_status},  {adb.data_storage_size_in_tbs}, {adb.db_name}, {adb.db_version}, {adb.db_workload}, {adb.display_name}, {adb.is_auto_scaling_enabled}, {adb.is_dedicated}, {adb.is_free_tier}, {adb.lifecycle_state}, {adb.whitelisted_ips}, {report_no}'

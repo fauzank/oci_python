@@ -138,14 +138,7 @@ class Announcement(object):
       self.announcements = announcement_service.list_announcements( config[ "tenancy" ], lifecycle_state=oci.announcements_service.models.AnnouncementSummary.LIFECYCLE_STATE_ACTIVE, sort_by="timeCreated" ).data
 
    def print(self):
-      # print( 'affected_regions, announcement_type, announcement id, reference_ticket_number, services, summary, time_updated, type' )
-
-      # for announcement in self.announcements.items:
-      #    affected_regions = str(announcement.affected_regions).strip( '[]' ).replace( ',', '/' ).replace( "'",'' )
-      #    services = str(announcement.services).strip( '[]' ).replace( ',', '/' ).replace( "'",'' )
-      #    print( f'{affected_regions}, {announcement.announcement_type}, {announcement.id}, {announcement.reference_ticket_number}, {services}, {announcement.summary}, {announcement.time_updated}, {announcement.type}' )    
-
-      data = 'affected_regions, announcement_type, announcement id, reference_ticket_number, services, summary, time_updated, type, report_no'
+      data = 'affected_regions, announcement_type, announcement_id, reference_ticket_number, services, summary, time_updated, type, report_no'
 
       for announcement in self.announcements.items:
          affected_regions = str(announcement.affected_regions).strip( '[]' ).replace( ',', '/' ).replace( "'",'' )
@@ -284,11 +277,6 @@ class Compute(object):
 
       write_file( data, 'bv_attachment' )
 
-      # Print Volume Attachments
-      # print( 'id, attachment_type, availability_domain, compartment_id, device, display_name, instance_id, is_pv_encryption_in_transit_enabled, is_read_only, is_shareable, lifecycle_state, volume_id' )
-      # for vol in self.vol_attachments:
-      #     print( f'{vol.id}, {vol.attachment_type}, {vol.availability_domain}, {vol.compartment_id}, {vol.device}, {vol.display_name}, {vol.instance_id}, {vol.is_pv_encryption_in_transit_enabled}, {vol.is_read_only}, {vol.is_shareable}, {vol.lifecycle_state}, {vol.volume_id}' )
-
       data = 'id, attachment_type, availability_domain, compartment_id, device, display_name, instance_id, is_pv_encryption_in_transit_enabled, is_read_only, is_shareable, lifecycle_state, volume_id, report_no'
       for vol in self.vol_attachments:
          data += '\n'
@@ -327,7 +315,7 @@ class BootVolume(object):
       data = 'id, availability_domain, compartment_id, display_name, image_id, is_hydrated, kms_key_id, lifecycle_state, size_in_gbs, size_in_mbs, volume_group_id, vpus_per_gb, report_no'
       for bv in self.boot_volumes:
          data += '\n'
-         data = f'{bv.id}, {bv.availability_domain}, {bv.compartment_id}, {bv.display_name}, {bv.image_id}, {bv.is_hydrated}, {bv.kms_key_id}, {bv.lifecycle_state}, {bv.size_in_gbs}, {bv.size_in_mbs}, {bv.volume_group_id}, {bv.vpus_per_gb}, {report_no}'
+         data += f'{bv.id}, {bv.availability_domain}, {bv.compartment_id}, {bv.display_name}, {bv.image_id}, {bv.is_hydrated}, {bv.kms_key_id}, {bv.lifecycle_state}, {bv.size_in_gbs}, {bv.size_in_mbs}, {bv.volume_group_id}, {bv.vpus_per_gb}, {report_no}'
 
       write_file( data, 'boot_volume' )
 

@@ -1,4 +1,5 @@
 import oci
+import sys
 from oci_services import OCIService
 
 def execute_extract():
@@ -10,7 +11,13 @@ def execute_extract():
 	# tenancy.print()
 	# announcement.print()
 
-   oci_service = OCIService()
+   
+   if len(sys.argv) > 1:
+      authentication = sys.argv[1]
+   else:
+      authentication = "CONFIG"
+
+   oci_service = OCIService( authentication )
    oci_service.extract_data()
 
 execute_extract()

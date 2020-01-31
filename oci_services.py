@@ -12,7 +12,7 @@ class OCIService(object):
       global report_no
       global par_url
       
-      print( authentication )
+      #print( authentication )
 
       self.config = oci.config.from_file( "/.oci/config", "DEFAULT")
       par_url = self.config[ 'par' ]      
@@ -255,13 +255,13 @@ class Compute(object):
          cnt = 0
 
          for c in tenancy.get_compartments():
-            print( c.name )
+            #print( c.name )
 
             self.dedicated_hosts += compute_client.list_dedicated_vm_hosts(c.id).data
             self.instances += compute_client.list_instances(c.id).data
             self.vol_attachments += compute_client.list_volume_attachments(c.id).data
             
-            print( compute_client.list_volume_attachments(c.id).data )
+            #print( compute_client.list_volume_attachments(c.id).data )
 
             ads = tenancy.get_availability_domains(region.region_name)
 
@@ -330,7 +330,7 @@ class BlockStorage(object):
 
                cnt += 1
                # sleep 0.5 seconds every 10 checks to avoid too many requests
-               if cnt % 5 == 0:
+               if cnt % 2 == 0:
                   time.sleep(0.5)
 
    def create_csv(self):

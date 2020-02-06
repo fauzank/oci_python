@@ -1,21 +1,43 @@
 import oci
 import time
 import requests
+import logging
+import socket
+import sys
+from logging.handlers import SysLogHandler
 
 config = None
 signer = None
 report_no = None
 par_url = None
 
+try:
+  app_name = sys.argv[2]
+except Exception:
+   app_name = 'NONE'
+
+syslog = SysLogHandler(address=( 'logs.papertrailapp.com', 26941))
+format = f'%(asctime)s {app_name}: %(levelname)s : %(lineno)d : %(message)s'
+formatter = logging.Formatter(format, datefmt='%b %d %H:%M:%S')
+syslog.setFormatter(formatter)
+
+logger = logging.getLogger()
+logger.addHandler(syslog)
+logger.setLevel(logging.WARNING)
+
+def my_handler(type, value, tb):
+    logger.exception('Uncaught exception: {0}'.format(str(value)))
+
+# Install exception handler
+sys.excepthook = my_handler
+
 class OCIService(object):
    def __init__(self, authentication):
       global report_no
       global par_url
       
-      #print( authentication )
-
       self.config = oci.config.from_file( "/.oci/config", "DEFAULT")
-      par_url = self.config[ 'par' ]      
+      par_url = self.config[ 'par' ]   
 
       # if intance pricipals - generate signer from token or config
       if( authentication == 'CONFIG' ):
@@ -40,6 +62,7 @@ class OCIService(object):
       compute.create_csv()
       block_storage.create_csv()
       db_system.create_csv()
+      print( f'File extraction completed')
 
    ##########################################################################
    # Generate Signer from config
@@ -66,11 +89,12 @@ class OCIService(object):
          self.signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
 
       except Exception:
-         print("*********************************************************************")
-         print("* Error obtaining instance principals certificate.                  *")
-         print("* Aboting.                                                          *")
-         print("*********************************************************************")
-         print("")
+
+         logger.info("*********************************************************************")
+         logger.info("* Error obtaining instance principals certificate.                  *")
+         logger.info("* Aboting.                                                          *")
+         logger.info("*********************************************************************")
+         logger.info("")
          raise SystemExit
 
       # generate config info from signer
@@ -255,14 +279,10 @@ class Compute(object):
          cnt = 0
 
          for c in tenancy.get_compartments():
-            #print( c.name )
-
             self.dedicated_hosts += compute_client.list_dedicated_vm_hosts(c.id).data
             self.instances += compute_client.list_instances(c.id).data
             self.vol_attachments += compute_client.list_volume_attachments(c.id).data
             
-            #print( compute_client.list_volume_attachments(c.id).data )
-
             ads = tenancy.get_availability_domains(region.region_name)
 
             for ad in ads:
@@ -410,7 +430,12 @@ class DBSystem(object):
 
       for db in self.databases:
          data += '\n'
-         data += f'{db.id}, {db.compartment_id}, {db.db_backup_config.auto_backup_enabled}, {db.db_backup_config.auto_backup_window}, {db.db_backup_config.backup_destination_details}, {db.db_backup_config.recovery_window_in_days}, {db.db_home_id}, {db.db_name}, {db.db_unique_name}, {db.db_workload}, {db.lifecycle_state}, {db.pdb_name}, {report_no}'
+         db_auto_backup_enabled = 'False' if db.db_backup_config == None else db.db_backup_config.auto_backup_enabled
+         db_auto_backup_window  = 'None' if db.db_backup_config == None else {db.db_backup_config.auto_backup_window}
+         db_backup_destination_details  = 'None' if db.db_backup_config == None else {db.db_backup_config.backup_destination_details}
+         db_recovery_window_in_days = 'None' if db.db_backup_config == None else {db.db_backup_config.recovery_window_in_days}
+
+         data += f'{db.id}, {db.compartment_id}, {db_auto_backup_enabled}, {db_auto_backup_window}, {db_backup_destination_details}, {db_recovery_window_in_days}, {db.db_home_id}, {db.db_name}, {db.db_unique_name}, {db.db_workload}, {db.lifecycle_state}, {db.pdb_name}, {report_no}'
 
       write_file( data, 'database' )
 
@@ -449,6 +474,9 @@ def write_file( strdata, filename ):
    global report_no
    global par_url
 
-   resp = requests.put( f'{par_url}{filename}_{report_no}.csv', data=strdata.encode('utf-8'))
-   print( f'{par_url}{filename}_{report_no}.csv - file written')
-   print( resp )
+   try:
+      resp = requests.put( f'{par_url}{filename}_{report_no}.csv', data=strdata.encode('utf-8'))
+      #logger.info( f'{par_url}{filename}_{report_no}.csv - file written')
+   except Exception:
+      logger.Error( f'failed to write file : {filename}_{report_no}')
+      logger.Error( resp )

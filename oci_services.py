@@ -5,6 +5,7 @@ import logging
 import socket
 import sys
 from logging.handlers import SysLogHandler
+from threading import Thread
 
 config = None
 signer = None
@@ -16,20 +17,22 @@ try:
 except Exception:
    app_name = 'NONE'
 
-syslog = SysLogHandler(address=( 'logs.papertrailapp.com', 26941))
+syslog = SysLogHandler(address=( 'logs.papertrailapp.com', 15167))
 format = f'%(asctime)s {app_name}: %(levelname)s : %(lineno)d : %(message)s'
 formatter = logging.Formatter(format, datefmt='%b %d %H:%M:%S')
 syslog.setFormatter(formatter)
 
 logger = logging.getLogger()
 logger.addHandler(syslog)
-logger.setLevel(logging.WARNING)
+logger.setLevel(logging.INFO)
 
 def my_handler(type, value, tb):
     logger.exception('Uncaught exception: {0}'.format(str(value)))
 
 # Install exception handler
 sys.excepthook = my_handler
+
+logger.debug("START")
 
 class OCIService(object):
    def __init__(self, authentication):
@@ -49,20 +52,38 @@ class OCIService(object):
       report_no = time.strftime('%Y-%m-%dT%H:%M:%SZ', timetup).replace( ':', '-')
 
    def extract_data(self):
+      
       tenancy = Tenancy(self.config, self.signer)
       announcement = Announcement(self.config, self.signer)
       limit = Limit( self.config, tenancy, self.signer )
       compute = Compute( self.config, tenancy, self.signer)
       block_storage = BlockStorage(self.config, tenancy, self.signer)    
       db_system = DBSystem( self.config, tenancy, self.signer )
-
-      tenancy.create_csv()
-      announcement.create_csv()
-      limit.create_csv()
-      compute.create_csv()
-      block_storage.create_csv()
-      db_system.create_csv()
-      print( f'File extraction completed')
+      
+      
+      thread1 = Thread(target = tenancy.create_csv)
+      thread2 = Thread(target = announcement.create_csv)
+      thread3 = Thread(target = limit.create_csv)
+      thread4 = Thread(target = compute.create_csv)
+      thread5 = Thread(target = block_storage.create_csv)
+      thread6 = Thread(target = db_system.create_csv)
+      
+      
+      logger.info("Starting second set of threads")
+      thread1.start()
+      thread2.start()
+      thread3.start()
+      thread4.start()
+      thread5.start()
+      thread6.start()
+      thread1.join()
+      thread2.join()
+      thread3.join()
+      thread4.join()
+      thread5.join()
+      thread6.join()
+      
+      logger.info( f'File extraction completed')
 
    ##########################################################################
    # Generate Signer from config
@@ -84,6 +105,7 @@ class OCIService(object):
    ###########################################################################
    def generate_signer_from_instance_principals(self):
 
+      logger.debug("Generate signer from instance principals...")
       try:
          # get signer from instance principals token
          self.signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
@@ -101,6 +123,8 @@ class OCIService(object):
       self.config = {'region': self.signer.region, 'tenancy': self.signer.tenancy_id}
 
 class Tenancy(object):
+       
+   logger.debug("Initiate Tennancy object...")
    tenancy_id = None
    name = None
    description = None
@@ -115,22 +139,22 @@ class Tenancy(object):
       self.tenancy_id = config["tenancy"]
 
       identity_client = oci.identity.IdentityClient(config = {}, signer=signer )
-      tenancy = identity_client.get_tenancy( self.tenancy_id ).data
+      tenancy = identity_client.get_tenancy( self.tenancy_id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
 
       self.name = tenancy.name
       self.description = tenancy.description
       self.home_region = tenancy.home_region_key
 
-      self.regions = identity_client.list_region_subscriptions( self.tenancy_id ).data
+      self.regions = identity_client.list_region_subscriptions( self.tenancy_id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
 
       self.compartments.append( oci.identity.models.Compartment(compartment_id=tenancy.id, name=f'{tenancy.name} (root)', description=tenancy.description, id=tenancy.id) )
-      self.compartments += identity_client.list_compartments( self.tenancy_id, compartment_id_in_subtree=True, access_level="ACCESSIBLE" ).data
+      self.compartments += identity_client.list_compartments( self.tenancy_id, compartment_id_in_subtree=True, access_level="ACCESSIBLE", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
 
       for region in self.regions:
          signer.region = region.region_name
          identity_client = oci.identity.IdentityClient(config = {}, signer=signer)
 
-         self.availability_domains += identity_client.list_availability_domains(self.tenancy_id).data
+         self.availability_domains += identity_client.list_availability_domains(self.tenancy_id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
    def get_compartments(self):
       return [c for c in self.compartments if ( c.lifecycle_state == 'ACTIVE' and c.name != 'ManagedCompartmentForPaaS' and c.name != 'OCI_Scripts' )]
@@ -183,10 +207,13 @@ class Tenancy(object):
 class Announcement(object):
    annoucements = []
 
-   def __init__(self, config, signer):
+   def __init__(self, config, signer):      
       announcement_service = oci.announcements_service.AnnouncementClient( config={}, signer=signer )
-      self.announcements = announcement_service.list_announcements( config[ "tenancy" ], lifecycle_state=oci.announcements_service.models.AnnouncementSummary.LIFECYCLE_STATE_ACTIVE, sort_by="timeCreated" ).data
+      self.announcements = announcement_service.list_announcements( config[ "tenancy" ], lifecycle_state=oci.announcements_service.models.AnnouncementSummary.LIFECYCLE_STATE_ACTIVE, sort_by="timeCreated", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
 
+      logger.debug("Announcements: ")
+      logger.debug(self.announcements)
+      
    def create_csv(self):
       data = 'affected_regions, announcement_type, announcement_id, reference_ticket_number, services, summary, time_updated, type, report_no'
 
@@ -204,54 +231,66 @@ class Limit(object):
 
    def __init__(self, config, tenancy, signer):
       tenancy_id = config[ "tenancy" ]
+      
+      jobs = []
 
       for region in tenancy.regions:
          signer.region = region.region_name
          
          limits_client = oci.limits.LimitsClient(config={}, signer=signer)
          
-         services = limits_client.list_services( tenancy_id, sort_by="name").data
+         services = limits_client.list_services( tenancy_id, sort_by="name", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
          if services:
             # oci.limits.models.ServiceSummary
             for service in services:            
                # get the limits per service
                
-               limits = limits_client.list_limit_values(tenancy_id, service_name=service.name, sort_by="name").data
+               limits = limits_client.list_limit_values(tenancy_id, service_name=service.name, sort_by="name", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+               
+               thread = Thread(target = self.get_info, args=(service, limits_client, limits, tenancy_id, tenancy, region, signer))
+               jobs.append(thread)
+         
+      for job in jobs:
+         job.start()
+         
+      for job in jobs:
+         job.join()
 
-               for limit in limits:
-                  val = {
-                           'service_name': str(service.name),
-                           'service_description': str(service.description),
-                           'limit_name': str(limit.name),
-                           'availability_domain': ("" if limit.availability_domain is None else str(limit.availability_domain)),
-                           'scope_type': str(limit.scope_type),
-                           'value': str(limit.value),
-                           'used': "",
-                           'available': "",
-                           'region_name': str(signer.region)
-                  }
+   def get_info(self, service, limits_client, limits, tenancy_id, tenancy, region, signer):
+      for limit in limits:
+         val = {
+                  'service_name': str(service.name),
+                  'service_description': str(service.description),
+                  'limit_name': str(limit.name),
+                  'availability_domain': ("" if limit.availability_domain is None else str(limit.availability_domain)),
+                  'scope_type': str(limit.scope_type),
+                  'value': str(limit.value),
+                  'used': "",
+                  'available': "",
+                  'region_name': str(signer.region)
+         }
 
-                  # if not limit, continue, don't calculate limit = 0
-                  if limit.value == 0:
-                     continue
+         # if not limit, continue, don't calculate limit = 0
+         if limit.value == 0:
+            continue
 
-                  # get usage per limit if available
-                  usage = []
-                  
-                  if limit.scope_type == "AD":
-                     usage = limits_client.get_resource_availability(service.name, limit.name, tenancy_id, availability_domain=limit.availability_domain).data
-                  else:
-                     usage = limits_client.get_resource_availability(service.name, limit.name, tenancy_id).data
+         # get usage per limit if available
+         usage = []
+         
+         if limit.scope_type == "AD":
+            usage = limits_client.get_resource_availability(service.name, limit.name, tenancy_id, availability_domain=limit.availability_domain, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+         else:
+            usage = limits_client.get_resource_availability(service.name, limit.name, tenancy_id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
-                  # oci.limits.models.ResourceAvailability
-                  if usage.used:
-                     val['used'] = str(usage.used)
-                     
-                  if usage.available:
-                     val['available'] = str(usage.available)
+         # oci.limits.models.ResourceAvailability
+         if usage.used:
+            val['used'] = str(usage.used)
+            
+         if usage.available:
+            val['available'] = str(usage.available)
 
-                  self.limit_summary.append(val)
+         self.limit_summary.append(val)
 
    def create_csv(self):
       data = 'region_name, service_name, service_description, limit_name, availability_domain, scope_type, value, used, available, report_no'
@@ -270,28 +309,36 @@ class Compute(object):
 
    def __init__(self, config, tenancy, signer):
       self.tenancy_id = config[ 'tenancy']
-
+      
+      jobs = []
+      
       for region in tenancy.regions:
          signer.region = region.region_name
 
          compute_client = oci.core.ComputeClient(config={}, signer=signer)
-
-         cnt = 0
-
+         
          for c in tenancy.get_compartments():
-            self.dedicated_hosts += compute_client.list_dedicated_vm_hosts(c.id).data
-            self.instances += compute_client.list_instances(c.id).data
-            self.vol_attachments += compute_client.list_volume_attachments(c.id).data
+            thread = Thread(target = self.get_info, args=(c, compute_client, tenancy, region))
+            jobs.append(thread)
+      
+      for job in jobs:
+         job.start()
+         
+      for job in jobs:
+         job.join()
+         
+      
+   def get_info(self, c, compute_client, tenancy, region):
+      self.dedicated_hosts += compute_client.list_dedicated_vm_hosts(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      self.instances += compute_client.list_instances(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      self.vol_attachments += compute_client.list_volume_attachments(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
             
-            ads = tenancy.get_availability_domains(region.region_name)
+      ads = tenancy.get_availability_domains(region.region_name)
+      
+      for ad in ads:
+         self.bv_attachments += compute_client.list_boot_volume_attachments( ad.name, c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
 
-            for ad in ads:
-               self.bv_attachments += compute_client.list_boot_volume_attachments( ad.name, c.id ).data
-
-               cnt += 1
-               # sleep 0.5 seconds every 10 checks to avoid too many requests
-               if cnt % 5 == 0:
-                  time.sleep(0.5)
+      
                
    def create_csv(self):
       # Dedicated VM Hosts
@@ -333,26 +380,34 @@ class BlockStorage(object):
    block_volumes = []
 
    def __init__(self, config, tenancy, signer):
-
+      jobs = []
+      
       for region in tenancy.regions:
          signer.region = region.region_name
          
          block_storage_client = oci.core.BlockstorageClient(config={}, signer=signer)
 
-         cnt = 0
+         #cnt = 0
          
-         for c in tenancy.get_compartments():                   
-            ads = tenancy.get_availability_domains(region.region_name)
-            self.block_volumes += block_storage_client.list_volumes(c.id).data
-
-            for ad in ads:            
-               self.boot_volumes += block_storage_client.list_boot_volumes(ad.name, c.id).data
-
-               cnt += 1
-               # sleep 0.5 seconds every 10 checks to avoid too many requests
-               if cnt % 2 == 0:
-                  time.sleep(0.5)
-
+         for c in tenancy.get_compartments():  
+            thread = Thread(target = self.get_info, args=(c, block_storage_client, tenancy, region))
+            jobs.append(thread)
+               
+      for job in jobs:
+         job.start()
+         
+      for job in jobs:
+         job.join()
+            
+   def get_info(self, c, block_storage_client, tenancy, region):     
+ 
+      ads = tenancy.get_availability_domains(region.region_name)
+      self.block_volumes += block_storage_client.list_volumes(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      
+      for ad in ads:            
+         self.boot_volumes += block_storage_client.list_boot_volumes(ad.name, c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+         
+         
    def create_csv(self):
       # Boot Volumes
       data = 'id, availability_domain, compartment_id, display_name, image_id, is_hydrated, kms_key_id, lifecycle_state, size_in_gbs, size_in_mbs, volume_group_id, vpus_per_gb, report_no'
@@ -382,29 +437,42 @@ class DBSystem(object):
    autonomous_db = []
 
    def __init__(self, config, tenancy, signer):
+      jobs = []
       
       for region in tenancy.regions:
          signer.region = region.region_name
 
          db_client = oci.database.DatabaseClient(config={}, signer=signer)
 
-         for c in tenancy.get_compartments():           
-            self.db_systems += db_client.list_db_systems(c.id).data
+         for c in tenancy.get_compartments():   
+            thread = Thread(target = self.get_info, args=(c, db_client, tenancy, region))
+            jobs.append(thread)
+         
+      for job in jobs:
+         job.start()
+         
+      for job in jobs:
+         job.join()
+         
+         
+   def get_info(self, c, db_client, tenancy, region):  
 
-            db_homes = db_client.list_db_homes(c.id).data
-            self.db_homes += db_homes
+      self.db_systems += db_client.list_db_systems(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
-            for db_home in db_homes:
-               self.databases += db_client.list_databases(c.id, db_home_id=db_home.id).data
-            
-            # for db in databases:
-            #    self.dg_associations += db_client.list_data_guard_associations(db.id).data             
-           
-            self.autonomous_exadata += db_client.list_autonomous_exadata_infrastructures(c.id).data
-            
-            self.autonomous_cdb += db_client.list_autonomous_container_databases(c.id).data
+      db_homes = db_client.list_db_homes(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      self.db_homes += db_homes
 
-            self.autonomous_db += db_client.list_autonomous_databases( c.id ).data
+      for db_home in db_homes:
+         self.databases += db_client.list_databases(c.id, db_home_id=db_home.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      
+      # for db in databases:
+      #    self.dg_associations += db_client.list_data_guard_associations(db.id).data             
+      
+      self.autonomous_exadata += db_client.list_autonomous_exadata_infrastructures(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      
+      self.autonomous_cdb += db_client.list_autonomous_container_databases(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+
+      self.autonomous_db += db_client.list_autonomous_databases(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
    def create_csv(self):
       # DB System

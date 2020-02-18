@@ -248,7 +248,7 @@ class Limit(object):
                
                limits = limits_client.list_limit_values(tenancy_id, service_name=service.name, sort_by="name", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
                
-               thread = Thread(target = self.get_info, args=(service, limits_client, limits, tenancy_id, tenancy, region, signer))
+               thread = Thread(target = self.get_info, args=(service, limits_client, limits, tenancy_id, tenancy, signer.region))
                jobs.append(thread)
          
       for job in jobs:
@@ -257,7 +257,7 @@ class Limit(object):
       for job in jobs:
          job.join()
 
-   def get_info(self, service, limits_client, limits, tenancy_id, tenancy, region, signer):
+   def get_info(self, service, limits_client, limits, tenancy_id, tenancy, region):
       for limit in limits:
          val = {
                   'service_name': str(service.name),
@@ -268,7 +268,7 @@ class Limit(object):
                   'value': str(limit.value),
                   'used': "",
                   'available': "",
-                  'region_name': str(signer.region)
+                  'region_name': str(region)
          }
 
          # if not limit, continue, don't calculate limit = 0

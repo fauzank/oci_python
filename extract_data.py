@@ -20,6 +20,7 @@ def execute_extract():
 
    oci_service = OCIService( authentication )
    oci_service.extract_data()
+   print("--- Execution time ---")
    print("--- %s seconds ---" % (time.time() - start_time))
 
 execute_extract()

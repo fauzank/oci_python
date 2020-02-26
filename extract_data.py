@@ -1,5 +1,6 @@
 import oci
 import sys
+import time
 from oci_services import OCIService
 
 def execute_extract():
@@ -11,7 +12,7 @@ def execute_extract():
 	# tenancy.print()
 	# announcement.print()
 
-   
+   start_time = time.time()
    if len(sys.argv) > 1:
       authentication = sys.argv[1]
    else:
@@ -19,5 +20,7 @@ def execute_extract():
 
    oci_service = OCIService( authentication )
    oci_service.extract_data()
+   print("--- Execution time ---")
+   print("--- %s seconds ---" % (time.time() - start_time))
 
 execute_extract()

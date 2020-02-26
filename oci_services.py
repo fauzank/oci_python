@@ -5,70 +5,116 @@ import logging
 import socket
 import sys
 from logging.handlers import SysLogHandler
+from threading import Thread
+from traceback import format_exception
 
+### Global Variables ###
+########################
 config = None
 signer = None
 report_no = None
 par_url = None
+########################
 
+### Check APP Name ###
+######################
 try:
   app_name = sys.argv[2]
 except Exception:
    app_name = 'NONE'
+######################
 
-syslog = SysLogHandler(address=( 'logs.papertrailapp.com', 26941))
+### LOGGER ###
+##############
+syslog = SysLogHandler(address=( 'logs.papertrailapp.com', 15167))
 format = f'%(asctime)s {app_name}: %(levelname)s : %(lineno)d : %(message)s'
 formatter = logging.Formatter(format, datefmt='%b %d %H:%M:%S')
 syslog.setFormatter(formatter)
 
 logger = logging.getLogger()
 logger.addHandler(syslog)
-logger.setLevel(logging.WARNING)
+logger.setLevel(logging.INFO)
+##############
 
+### Uncaught Exception Handler ###
+##################################
 def my_handler(type, value, tb):
-    logger.exception('Uncaught exception: {0}'.format(str(value)))
+   #logger.exception('Uncaught exception: {0}'.format(str(value)))
+   logger.error("*********************************************************************")
+   logger.error("* An uncaught error was raised !!!                                  *")
+   logger.error("*********************************************************************")
+   logger.error("")
+   logger.exception(format_exception(type, value, tb))
 
 # Install exception handler
 sys.excepthook = my_handler
+##################################
+
+logger.info("### START ###")
+logger.debug("Application name is: ", app_name)
+
 
 class OCIService(object):
    def __init__(self, authentication):
       global report_no
       global par_url
       
+      # source the config file
       self.config = oci.config.from_file( "/.oci/config", "DEFAULT")
       par_url = self.config[ 'par' ]   
 
       # if intance pricipals - generate signer from token or config
       if( authentication == 'CONFIG' ):
+         logger.info("Generate Auth signer from config file.")
          self.generate_signer_from_config()
       else:
+         logger.info("Generate Auth signer from instance principal.")
          self.generate_signer_from_instance_principals()
       
+      # time var for report number
       timetup = time.gmtime()
       report_no = time.strftime('%Y-%m-%dT%H:%M:%SZ', timetup).replace( ':', '-')
 
    def extract_data(self):
+      logger.info("Data Extract & Data Upload processes initated. Please wait...")
+      
+      logger.debug("Initiate Data Extract objects...")
       tenancy = Tenancy(self.config, self.signer)
       announcement = Announcement(self.config, self.signer)
       limit = Limit( self.config, tenancy, self.signer )
       compute = Compute( self.config, tenancy, self.signer)
       block_storage = BlockStorage(self.config, tenancy, self.signer)    
       db_system = DBSystem( self.config, tenancy, self.signer )
+      logger.info("Data extraction finished.")
+      
+      # Create threads for "create_csv" methods 
+      thread1 = Thread(target = tenancy.create_csv)
+      thread2 = Thread(target = announcement.create_csv)
+      thread3 = Thread(target = limit.create_csv)
+      thread4 = Thread(target = compute.create_csv)
+      thread5 = Thread(target = block_storage.create_csv)
+      thread6 = Thread(target = db_system.create_csv)
+      
+      logger.debug("Starting to write data to Object storage...")
+      thread1.start()
+      thread2.start()
+      thread3.start()
+      thread4.start()
+      thread5.start()
+      thread6.start()
+      thread1.join()
+      thread2.join()
+      thread3.join()
+      thread4.join()
+      thread5.join()
+      thread6.join()
+      
+      logger.info("Data upload to Object Storage finished.")
+      logger.info("### END ###")
 
-      tenancy.create_csv()
-      announcement.create_csv()
-      limit.create_csv()
-      compute.create_csv()
-      block_storage.create_csv()
-      db_system.create_csv()
-      print( f'File extraction completed')
-
-   ##########################################################################
-   # Generate Signer from config
-   ###########################################################################
+   ### Generate Signer from config ###
+   ###################################
    def generate_signer_from_config(self):
-
       # create signer from config for authentication
       self.signer = oci.signer.Signer(
          tenancy=self.config["tenancy"],
@@ -79,28 +125,26 @@ class OCIService(object):
          #private_key_content=self.config.get("key_content")
       )
 
-   ##########################################################################
-   # Generate Signer from instance_principals
-   ###########################################################################
+   ### Generate Signer from instance_principals ###
+   ################################################
    def generate_signer_from_instance_principals(self):
-
       try:
          # get signer from instance principals token
          self.signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
-
       except Exception:
-
-         logger.info("*********************************************************************")
-         logger.info("* Error obtaining instance principals certificate.                  *")
-         logger.info("* Aboting.                                                          *")
-         logger.info("*********************************************************************")
-         logger.info("")
+         logger.error("*********************************************************************")
+         logger.error("* Error obtaining instance principals certificate.                  *")
+         logger.error("* Aboting.                                                          *")
+         logger.error("*********************************************************************")
+         logger.error("")
          raise SystemExit
 
       # generate config info from signer
       self.config = {'region': self.signer.region, 'tenancy': self.signer.tenancy_id}
 
 class Tenancy(object):
+   logger.info("Initiate Tennancy object...")
+   
    tenancy_id = None
    name = None
    description = None
@@ -114,27 +158,45 @@ class Tenancy(object):
    def __init__(self, config, signer):
       self.tenancy_id = config["tenancy"]
 
+      # get the identity client & tenancy objects
       identity_client = oci.identity.IdentityClient(config = {}, signer=signer )
-      tenancy = identity_client.get_tenancy( self.tenancy_id ).data
+      tenancy = identity_client.get_tenancy( self.tenancy_id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
 
       self.name = tenancy.name
       self.description = tenancy.description
       self.home_region = tenancy.home_region_key
 
-      self.regions = identity_client.list_region_subscriptions( self.tenancy_id ).data
+      # get list of regions
+      self.regions = identity_client.list_region_subscriptions( self.tenancy_id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
+      logger.debug(" --- List of regions is --- ")
+      logger.debug(self.regions)
 
+      # create compartments list
       self.compartments.append( oci.identity.models.Compartment(compartment_id=tenancy.id, name=f'{tenancy.name} (root)', description=tenancy.description, id=tenancy.id) )
-      self.compartments += identity_client.list_compartments( self.tenancy_id, compartment_id_in_subtree=True, access_level="ACCESSIBLE" ).data
-
+      self.compartments += identity_client.list_compartments( self.tenancy_id, compartment_id_in_subtree=True, access_level="ACCESSIBLE", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
+      logger.debug(" --- List of compartments is --- ")
+      logger.debug(self.compartments)
+      
+      # loop over each region
       for region in self.regions:
          signer.region = region.region_name
          identity_client = oci.identity.IdentityClient(config = {}, signer=signer)
+         
+         # add ADs for each region
+         self.availability_domains += identity_client.list_availability_domains(self.tenancy_id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
-         self.availability_domains += identity_client.list_availability_domains(self.tenancy_id).data
-
+      logger.debug(" --- List of ADs is --- ")
+      logger.debug(self.availability_domains)
+      
+      logger.info("Tenancy - DONE.")
+      
+   ### return the list of ACTIVE compartments ###
+   ##############################################
    def get_compartments(self):
       return [c for c in self.compartments if ( c.lifecycle_state == 'ACTIVE' and c.name != 'ManagedCompartmentForPaaS' and c.name != 'OCI_Scripts' )]
 
+   ### return the list of ADs for a specific region ###
+   ####################################################
    def get_availability_domains( self, region_name):
       #return [e for e in availability.domains if e.region_name == region_name]
       data = []
@@ -146,7 +208,10 @@ class Tenancy(object):
 
       return data
 
+   ### upload tennancy data to object storage ###
+   ##############################################
    def create_csv(self):
+      # Tenancy
       data = 'tenancy_id, tenancy_name, description, home_region, report_no'
       data += '\n'
       data += f'{self.tenancy_id}, {self.name}, {self.description}, {self.home_region}, {report_no}'
@@ -181,12 +246,22 @@ class Tenancy(object):
       write_file( data, 'availability_domain' )
 
 class Announcement(object):
+   logger.info("Initiate Announcement object...")
+   
    annoucements = []
 
-   def __init__(self, config, signer):
+   def __init__(self, config, signer):      
+      # get list of announcements
       announcement_service = oci.announcements_service.AnnouncementClient( config={}, signer=signer )
-      self.announcements = announcement_service.list_announcements( config[ "tenancy" ], lifecycle_state=oci.announcements_service.models.AnnouncementSummary.LIFECYCLE_STATE_ACTIVE, sort_by="timeCreated" ).data
+      self.announcements = announcement_service.list_announcements( config[ "tenancy" ], lifecycle_state=oci.announcements_service.models.AnnouncementSummary.LIFECYCLE_STATE_ACTIVE, sort_by="timeCreated", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
 
+      logger.debug(" --- List of Announcements is --- ")
+      logger.debug(self.announcements)
+      
+      logger.info("Announcement - DONE.")
+      
+   ### upload Announcement data to object storage ###
+   ##################################################
    def create_csv(self):
       data = 'affected_regions, announcement_type, announcement_id, reference_ticket_number, services, summary, time_updated, type, report_no'
 
@@ -199,60 +274,83 @@ class Announcement(object):
       write_file( data, 'announcement' )
 
 class Limit(object):
-
+   logger.info("Initiate Limit object...")
+   
    limit_summary = []
 
    def __init__(self, config, tenancy, signer):
       tenancy_id = config[ "tenancy" ]
+      jobs = []
 
+      # loop over all regions
       for region in tenancy.regions:
          signer.region = region.region_name
          
          limits_client = oci.limits.LimitsClient(config={}, signer=signer)
-         
-         services = limits_client.list_services( tenancy_id, sort_by="name").data
+         services = limits_client.list_services( tenancy_id, sort_by="name", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data      
 
          if services:
             # oci.limits.models.ServiceSummary
             for service in services:            
                # get the limits per service
+               limits = limits_client.list_limit_values(tenancy_id, service_name=service.name, sort_by="name", retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
                
-               limits = limits_client.list_limit_values(tenancy_id, service_name=service.name, sort_by="name").data
+               # initiate thread for service
+               thread = Thread(target = self.get_info, args=(service, limits_client, limits, tenancy_id, tenancy, signer.region))
+               jobs.append(thread)
+         
+      # start threads   
+      for job in jobs:
+         job.start()
+         
+      # join threads so we don't quit until all threads have finished
+      for job in jobs:
+         job.join()
+         
+      logger.debug(" --- List of Limits is --- ")
+      logger.debug(self.limit_summary)
+      
+      logger.info("Limit - DONE.")
+      
+   ### thread function - get all limits ###
+   ########################################
+   def get_info(self, service, limits_client, limits, tenancy_id, tenancy, region):
+      for limit in limits:
+         val = {
+                  'service_name': str(service.name),
+                  'service_description': str(service.description),
+                  'limit_name': str(limit.name),
+                  'availability_domain': ("" if limit.availability_domain is None else str(limit.availability_domain)),
+                  'scope_type': str(limit.scope_type),
+                  'value': str(limit.value),
+                  'used': "",
+                  'available': "",
+                  'region_name': str(region)
+         }
 
-               for limit in limits:
-                  val = {
-                           'service_name': str(service.name),
-                           'service_description': str(service.description),
-                           'limit_name': str(limit.name),
-                           'availability_domain': ("" if limit.availability_domain is None else str(limit.availability_domain)),
-                           'scope_type': str(limit.scope_type),
-                           'value': str(limit.value),
-                           'used': "",
-                           'available': "",
-                           'region_name': str(signer.region)
-                  }
+         # if not limit, continue, don't calculate limit = 0
+         if limit.value == 0:
+            continue
 
-                  # if not limit, continue, don't calculate limit = 0
-                  if limit.value == 0:
-                     continue
+         # get usage per limit if available
+         usage = []
+         
+         if limit.scope_type == "AD":
+            usage = limits_client.get_resource_availability(service.name, limit.name, tenancy_id, availability_domain=limit.availability_domain, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+         else:
+            usage = limits_client.get_resource_availability(service.name, limit.name, tenancy_id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
-                  # get usage per limit if available
-                  usage = []
-                  
-                  if limit.scope_type == "AD":
-                     usage = limits_client.get_resource_availability(service.name, limit.name, tenancy_id, availability_domain=limit.availability_domain).data
-                  else:
-                     usage = limits_client.get_resource_availability(service.name, limit.name, tenancy_id).data
+         # oci.limits.models.ResourceAvailability
+         if usage.used:
+            val['used'] = str(usage.used)
+            
+         if usage.available:
+            val['available'] = str(usage.available)
 
-                  # oci.limits.models.ResourceAvailability
-                  if usage.used:
-                     val['used'] = str(usage.used)
-                     
-                  if usage.available:
-                     val['available'] = str(usage.available)
-
-                  self.limit_summary.append(val)
-
+         self.limit_summary.append(val)
+         
+   ### upload Limit data to object storage ###
+   ###########################################
    def create_csv(self):
       data = 'region_name, service_name, service_description, limit_name, availability_domain, scope_type, value, used, available, report_no'
       for limit in self.limit_summary:
@@ -262,6 +360,8 @@ class Limit(object):
       write_file( data, 'limit' )
 
 class Compute(object):
+   logger.info("Initiate Compute object...")
+   
    dedicated_hosts = []
    instances = []
    bv_attachments = []
@@ -270,29 +370,57 @@ class Compute(object):
 
    def __init__(self, config, tenancy, signer):
       self.tenancy_id = config[ 'tenancy']
-
+      jobs = []
+      
+      # loop over all regions
       for region in tenancy.regions:
          signer.region = region.region_name
-
          compute_client = oci.core.ComputeClient(config={}, signer=signer)
-
-         cnt = 0
-
+         
+         # loop over all compartments in each region
          for c in tenancy.get_compartments():
-            self.dedicated_hosts += compute_client.list_dedicated_vm_hosts(c.id).data
-            self.instances += compute_client.list_instances(c.id).data
-            self.vol_attachments += compute_client.list_volume_attachments(c.id).data
-            
-            ads = tenancy.get_availability_domains(region.region_name)
-
-            for ad in ads:
-               self.bv_attachments += compute_client.list_boot_volume_attachments( ad.name, c.id ).data
-
-               cnt += 1
-               # sleep 0.5 seconds every 10 checks to avoid too many requests
-               if cnt % 5 == 0:
-                  time.sleep(0.5)
+            # initiate a thread for each compartment
+            thread = Thread(target = self.get_info, args=(c, compute_client, tenancy, region))
+            jobs.append(thread)
+      
+      # start threads
+      for job in jobs:
+         job.start()
+         
+      # join threads so we don't quit until all threads have finished
+      for job in jobs:
+         job.join()
+                  
+      logger.debug(" --- List of Dedicated Hosts is --- ")
+      logger.debug(self.dedicated_hosts)
+      logger.debug(" --- List of Instances is --- ")
+      logger.debug(self.instances)
+      logger.debug(" --- List of Volume Attachments is --- ")
+      logger.debug(self.vol_attachments)
+      logger.debug(" --- List of Boot Volume Attachments is --- ")
+      logger.debug(self.bv_attachments)
                
+      logger.info("Compute - DONE.")
+      
+   ### thread function - get all info about instances ###
+   ######################################################
+   def get_info(self, c, compute_client, tenancy, region):
+      # get all dedicated hosts
+      self.dedicated_hosts += compute_client.list_dedicated_vm_hosts(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      # get all instances
+      self.instances += compute_client.list_instances(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      # get all volume attachments
+      self.vol_attachments += compute_client.list_volume_attachments(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+            
+      ads = tenancy.get_availability_domains(region.region_name)
+      
+      for ad in ads:
+         # get all boot volume attachments
+         self.bv_attachments += compute_client.list_boot_volume_attachments( ad.name, c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY ).data
+
+      
+   ### upload Compute data to object storage ###
+   #############################################          
    def create_csv(self):
       # Dedicated VM Hosts
       data = 'id, availability_domain, compartment_id, dedicated_vm_host_shape, display_name, fault_domain, lifecycle_state, remaining_ocpus, total_ocpus, report_no'
@@ -329,30 +457,53 @@ class Compute(object):
          write_file( data, 'vol_attachment' )
 
 class BlockStorage(object):
+   logger.info("Initiate Block Storage object...")
+   
    boot_volumes = []
    block_volumes = []
 
    def __init__(self, config, tenancy, signer):
-
+      jobs = []
+      
+      # loop over all regions
       for region in tenancy.regions:
          signer.region = region.region_name
-         
          block_storage_client = oci.core.BlockstorageClient(config={}, signer=signer)
-
-         cnt = 0
          
-         for c in tenancy.get_compartments():                   
-            ads = tenancy.get_availability_domains(region.region_name)
-            self.block_volumes += block_storage_client.list_volumes(c.id).data
-
-            for ad in ads:            
-               self.boot_volumes += block_storage_client.list_boot_volumes(ad.name, c.id).data
-
-               cnt += 1
-               # sleep 0.5 seconds every 10 checks to avoid too many requests
-               if cnt % 2 == 0:
-                  time.sleep(0.5)
-
+         # loop over all compartments from each region
+         for c in tenancy.get_compartments():  
+            # initiate a thread for each compartment
+            thread = Thread(target = self.get_info, args=(c, block_storage_client, tenancy, region))
+            jobs.append(thread)
+               
+      # start all threads
+      for job in jobs:
+         job.start()
+         
+      # join threads so we don't quit until all threads have finished
+      for job in jobs:
+         job.join()
+                  
+      logger.debug(" --- List of Block Volumes is --- ")
+      logger.debug(self.block_volumes)
+      logger.debug(" --- List of Boot Volumes is --- ")
+      logger.debug(self.boot_volumes)
+      
+      logger.info("Block Storage - DONE.")
+      
+   ### thread function - get all info about block storage ###
+   ##########################################################
+   def get_info(self, c, block_storage_client, tenancy, region):     
+      # get all block volumes
+      ads = tenancy.get_availability_domains(region.region_name)
+      self.block_volumes += block_storage_client.list_volumes(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      
+      for ad in ads:   
+         # get all boot volumes from each AD         
+         self.boot_volumes += block_storage_client.list_boot_volumes(ad.name, c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+         
+   ### upload Block Storage data to object storage ###
+   ###################################################      
    def create_csv(self):
       # Boot Volumes
       data = 'id, availability_domain, compartment_id, display_name, image_id, is_hydrated, kms_key_id, lifecycle_state, size_in_gbs, size_in_mbs, volume_group_id, vpus_per_gb, report_no'
@@ -373,6 +524,8 @@ class BlockStorage(object):
       write_file( data, 'block_volume' )
 
 class DBSystem(object):
+   logger.info("Initiate DB System object...")
+   
    db_systems = []
    db_homes = []
    databases = []
@@ -382,30 +535,68 @@ class DBSystem(object):
    autonomous_db = []
 
    def __init__(self, config, tenancy, signer):
+      jobs = []
       
+      # loop over all regions
       for region in tenancy.regions:
          signer.region = region.region_name
-
          db_client = oci.database.DatabaseClient(config={}, signer=signer)
 
-         for c in tenancy.get_compartments():           
-            self.db_systems += db_client.list_db_systems(c.id).data
+         # loop over all compartments from each region
+         for c in tenancy.get_compartments():   
+            # initiate a thread for each compartment
+            thread = Thread(target = self.get_info, args=(c, db_client, tenancy, region))
+            jobs.append(thread)
+         
+      # start all threads
+      for job in jobs:
+         job.start()
+         
+      # join threads so we don't quit until all threads have finished
+      for job in jobs:
+         job.join()
+         
+      logger.debug(" --- List of DB Systems is --- ")
+      logger.debug(self.db_systems)
+      logger.debug(" --- List of DB Homes is --- ")
+      logger.debug(self.db_homes)
+      logger.debug(" --- List of DBs is --- ")
+      logger.debug(self.databases)
+      logger.debug(" --- List of Autonomous Exadata Infra is --- ")
+      logger.debug(self.autonomous_exadata)
+      logger.debug(" --- List of Autonomous Container DB is --- ")
+      logger.debug(self.autonomous_cdb)
+      logger.debug(" --- List of Autonomous DB is --- ")
+      logger.debug(self.autonomous_db)
+         
+      logger.info("DB Systems - DONE.")
+               
+   ### thread function - get all info about DB Systems ###
+   #######################################################
+   def get_info(self, c, db_client, tenancy, region):  
+      # get all db systems
+      self.db_systems += db_client.list_db_systems(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
-            db_homes = db_client.list_db_homes(c.id).data
-            self.db_homes += db_homes
+      # get all db homes
+      db_homes = db_client.list_db_homes(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      self.db_homes += db_homes
 
-            for db_home in db_homes:
-               self.databases += db_client.list_databases(c.id, db_home_id=db_home.id).data
-            
-            # for db in databases:
-            #    self.dg_associations += db_client.list_data_guard_associations(db.id).data             
-           
-            self.autonomous_exadata += db_client.list_autonomous_exadata_infrastructures(c.id).data
-            
-            self.autonomous_cdb += db_client.list_autonomous_container_databases(c.id).data
+      for db_home in db_homes:
+         # get all databases from each db home
+         self.databases += db_client.list_databases(c.id, db_home_id=db_home.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      
+      # for db in databases:
+      #    self.dg_associations += db_client.list_data_guard_associations(db.id).data             
+      
+      # get all autonomous exadata infra
+      self.autonomous_exadata += db_client.list_autonomous_exadata_infrastructures(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      # get all autonomous container dbs
+      self.autonomous_cdb += db_client.list_autonomous_container_databases(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
+      # get all autonomous dbs
+      self.autonomous_db += db_client.list_autonomous_databases(c.id, retry_strategy=oci.retry.DEFAULT_RETRY_STRATEGY).data
 
-            self.autonomous_db += db_client.list_autonomous_databases( c.id ).data
-
+   ### upload DB Systems data to object storage ###
+   ################################################
    def create_csv(self):
       # DB System
       data = 'id, availability_domain, cluster_name, compartment_id, cpu_core_count, data_storage_percentage, data_storage_size_in_gbs, database_edition, disk_redundancy, display_name, domain, hostname, lifecycle_state, node_count, reco_storage_size_in_gb, shape, sparse_diskgroup, version, report_no'
@@ -470,13 +661,15 @@ class DBSystem(object):
 
       write_file( data, 'autonomous_db' )
 
+### Upload data to Object Storage ###
+#####################################
 def write_file( strdata, filename ):
    global report_no
    global par_url
 
    try:
       resp = requests.put( f'{par_url}{filename}_{report_no}.csv', data=strdata.encode('utf-8'))
-      #logger.info( f'{par_url}{filename}_{report_no}.csv - file written')
-   except Exception:
-      logger.Error( f'failed to write file : {filename}_{report_no}')
-      logger.Error( resp )
+      logger.info(f'Uploading file: {par_url}{filename}_{report_no}.csv to object storage.')
+   except Exception as err:
+      logger.error( f'Failed to upload file : {filename}_{report_no}')
+      logger.error(err)
